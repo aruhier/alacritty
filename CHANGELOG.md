@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unicode 13 support
 - Option to run command on bell which can be set in `bell.command`
 - Fallback to program specified in `$SHELL` variable on Linux/BSD if it is present
+- Option `window.disable_vsync` to explicitly disable vsync
 
 ### Changed
 
