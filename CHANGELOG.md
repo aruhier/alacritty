@@ -1,10 +1,16 @@
 # Changelog
-All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to Alacritty are documented in this file.
+The sections should follow the order `Packaging`, `Added`, `Changed`, `Fixed` and `Removed`.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## 0.6.0-dev
+
+### Packaging
+
+- Minimum Rust version has been bumped to 1.43.0
+- The snapcraft.yaml file has been removed
 
 ### Added
 
@@ -22,10 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prebuilt Linux binaries have been removed
 - Added manpage, terminfo, and completions to macOS application bundle
 - On Linux/BSD the build will fail without Fontconfig installed, instead of building it from source
-
-### Removed
-
-- Environment variable `RUST_LOG` for selecting the log level
 
 ### Added
 
@@ -87,6 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Environment variable `RUST_LOG` for selecting the log level
 - Deprecated `window.start_maximized` config field
 - Deprecated `render_timer` config field
 - Deprecated `persistent_logging` config field
@@ -520,10 +523,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - All options in the configuration file are now optional
 
-### Removed
-
-- Windows and macOS configuration files (`alacritty.yml` is now platform independent)
-
 ### Fixed
 
 - Replaced `Command` with `Super` in the Linux and Windows config documentation
@@ -532,6 +531,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolve issue with high CPU usage after moving Alacritty between displays
 - Characters will no longer be deleted when using ncurses with the hard tab optimization
 - Crash on non-linux operating systems when using the `SpawnNewInstance` action
+
+### Removed
+
+- Windows and macOS configuration files (`alacritty.yml` is now platform independent)
 
 ## Version 0.2.5
 
@@ -620,13 +623,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extra padding is now spread evenly around the terminal grid
 - DEB file installs to `usr/bin` instead of `usr/local/bin`
 
-### Removed
-
-- The `custom_cursor_colors` config field was deleted, remove the `colors.cursor.*` options
-  to achieve the same behavior as setting it to `false`
-- The `scale_with_dpi` configuration value has been removed, on Linux the env
-    variable `WINIT_HIDPI_FACTOR=1` can be set instead to disable DPI scaling
-
 ### Fixed
 
 - Fixed erroneous results when using the `indexed_colors` config option
@@ -644,6 +640,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On Wayland, key repetition works again
 - On macOS, Alacritty will now use the integrated GPU again when available
 - On Linux, the `WINIT_HIDPI_FACTOR` environment variable can be set from the config now
+
+### Removed
+
+- The `custom_cursor_colors` config field was deleted, remove the `colors.cursor.*` options
+  to achieve the same behavior as setting it to `false`
+- The `scale_with_dpi` configuration value has been removed, on Linux the env
+    variable `WINIT_HIDPI_FACTOR=1` can be set instead to disable DPI scaling
 
 ## Version 0.2.1
 
@@ -670,11 +673,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   present on the system
 - The default `TERM` value is no longer static; the `alacritty` entry is used if
   available, otherwise the `xterm-256color` entry is used instead
-
-### Removed
-
-- The terminfo entry `alacritty-256color`. It is replaced by the `alacritty`
-  entry (which also advertises 256 colors)
+- The values `true` and `false` for the config option `window.decorations` have been replaced with
+    `full` and `none`
 
 ### Fixed
 
@@ -685,15 +685,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empty lines in selections are now properly copied to the clipboard
 - Selection start point lagging behind initial cursor position
 - Rendering of selections which start above the visible area and end below it
-
-### Deprecated
-
-- The config option `window.decorations` should now use `full` or `none` instead
-  of `true` or `false`, respectively.
-
-### Security
-
 - Bracketed paste mode now filters escape sequences beginning with \x1b
+
+### Removed
+
+- The terminfo entry `alacritty-256color`. It is replaced by the `alacritty`
+  entry (which also advertises 256 colors)
 
 ## Version 0.2.0
 
