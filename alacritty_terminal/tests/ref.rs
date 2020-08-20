@@ -65,6 +65,8 @@ ref_tests! {
     wrapline_alt_toggle
     saved_cursor
     saved_cursor_alt
+    sgr
+    underline
 }
 
 fn read_u8<P>(path: P) -> Vec<u8>
