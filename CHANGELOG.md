@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Escapes for double underlines (`CSI 4 : 2 m`) and underline reset (`CSI 4 : 0 m`)
 - Configuration file option for sourcing other files (`import`)
 - CLI parameter `--option`/`-o` to override any configuration field
+- Escape sequences to report text area size in pixels (`CSI 14 t`) and in characters (`CSI 18 t`)
 
 ### Changed
 
@@ -37,6 +38,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Keys swallowed during search when pressing them right before releasing backspace
 - Crash when a wrapped line is rotated into the last line
 - Selection wrapping to the top when selecting below the error/warning bar
+- Pasting into clients only supporting `UTF8_STRING` mime type on Wayland
+- Crash when copying/pasting with neither pointer nor keyboard focus on Wayland
+- Crash due to fd leak on Wayland
 
 ## 0.5.0
 
