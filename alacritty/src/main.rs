@@ -1,6 +1,8 @@
 //! Alacritty - The GPU Enhanced Terminal.
 
+#![warn(rust_2018_idioms, future_incompatible)]
 #![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use, clippy::wrong_pub_self_convention)]
+#![cfg_attr(feature = "cargo-clippy", deny(warnings))]
 #![cfg_attr(all(test, feature = "bench"), feature(test))]
 // With the default subsystem, 'console', windows creates an additional console
 // window for the program.
@@ -36,9 +38,9 @@ mod daemon;
 mod display;
 mod event;
 mod input;
-#[cfg(target_os = "macos")]
-mod locale;
 mod logging;
+#[cfg(target_os = "macos")]
+mod macos;
 mod message_bar;
 mod meter;
 #[cfg(windows)]
@@ -61,6 +63,8 @@ use crate::config::monitor;
 use crate::config::Config;
 use crate::display::Display;
 use crate::event::{Event, EventProxy, Processor};
+#[cfg(target_os = "macos")]
+use crate::macos::locale;
 use crate::message_bar::MessageBuffer;
 
 fn main() {

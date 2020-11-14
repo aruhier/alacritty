@@ -27,7 +27,7 @@ use crossfont::{self, Rasterize, Rasterizer};
 use alacritty_terminal::event::{EventListener, OnResize};
 use alacritty_terminal::index::{Column, Direction, Point};
 use alacritty_terminal::selection::Selection;
-use alacritty_terminal::term::{RenderableCell, SizeInfo, Term, TermMode};
+use alacritty_terminal::term::{SizeInfo, Term, TermMode};
 use alacritty_terminal::term::{MIN_COLS, MIN_SCREEN_LINES};
 
 use crate::config::font::Font;
@@ -437,7 +437,13 @@ impl Display {
         mods: ModifiersState,
         search_state: &SearchState,
     ) {
-        let grid_cells: Vec<RenderableCell> = terminal.renderable_cells(config).collect();
+        // Convert search match from viewport to absolute indexing.
+        let search_active = search_state.regex().is_some();
+        let viewport_match = search_state
+            .focused_match()
+            .and_then(|focused_match| terminal.grid().clamp_buffer_range_to_visible(focused_match));
+
+        let grid_cells = terminal.renderable_cells(config, !search_active).collect::<Vec<_>>();
         let visual_bell_intensity = terminal.visual_bell.intensity();
         let background_color = terminal.background_color();
         let cursor_point = terminal.grid().cursor.point;
@@ -471,12 +477,26 @@ impl Display {
 
             self.renderer.with_api(&config.ui_config, config.cursor, &size_info, |mut api| {
                 // Iterate over all non-empty cells in the grid.
-                for cell in grid_cells {
+                for mut cell in grid_cells {
+                    // Invert the active match in vi-less search.
+                    let cell_point = Point::new(cell.line, cell.column);
+                    if cell.is_match
+                        && viewport_match
+                            .as_ref()
+                            .map_or(false, |viewport_match| viewport_match.contains(&cell_point))
+                    {
+                        let colors = config.colors.search.focused_match;
+                        let match_fg = colors.foreground().color(cell.fg, cell.bg);
+                        cell.bg = colors.background().color(cell.fg, cell.bg);
+                        cell.fg = match_fg;
+                        cell.bg_alpha = 1.0;
+                    }
+
                     // Update URL underlines.
-                    urls.update(size_info.cols(), cell);
+                    urls.update(size_info.cols(), &cell);
 
                     // Update underline/strikeout.
-                    lines.update(cell);
+                    lines.update(&cell);
 
                     // Draw the cell.
                     api.render_cell(cell, glyph_cache);
@@ -525,7 +545,7 @@ impl Display {
         }
 
         if let Some(message) = message_buffer.message() {
-            let search_offset = if search_state.regex().is_some() { 1 } else { 0 };
+            let search_offset = if search_active { 1 } else { 0 };
             let text = message.text(&size_info);
 
             // Create a new rectangle for the background.
@@ -691,8 +711,8 @@ fn compute_cell_size(config: &Config, metrics: &crossfont::Metrics) -> (f32, f32
     let offset_x = f64::from(config.ui_config.font.offset.x);
     let offset_y = f64::from(config.ui_config.font.offset.y);
     (
-        ((metrics.average_advance + offset_x) as f32).floor().max(1.),
-        ((metrics.line_height + offset_y) as f32).floor().max(1.),
+        (metrics.average_advance + offset_x).floor().max(1.) as f32,
+        (metrics.line_height + offset_y).floor().max(1.) as f32,
     )
 }
 

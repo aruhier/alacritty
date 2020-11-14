@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The snapcraft.yaml file has been removed
 - Updated `setab`/`setaf` capabilities in `alacritty-direct` to use colons
 - WinPTY is now enabled only when targeting MSVC
+- Deprecated the WinPTY backend feature, disabling it by default
 
 ### Added
 
@@ -30,12 +31,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - Cursors are now inverted when their fixed color is similar to the cell's background
-- Use working directory of active process instead of shell for SpawnNewInstance action
+- Use the working directory of the terminal foreground process, instead of the shell's working
+    directory, for `SpawnNewInstance` action
 - Fallback to normal underline for unsupported underline types in `CSI 4 : ? m` escapes
 - The user's background color is now used as the foreground for the render timer
 - Use yellow/red from the config for error and warning messages instead of fixed colors
 - Existing CLI parameters are now passed to instances spawned using `SpawnNewInstance`
 - Wayland's Client side decorations now use the search bar colors
+- Reduce memory usage by up to at least 30% with a full scrollback buffer
+- The number of zerowidth characters per cell is no longer limited to 5
+- `SpawnNewInstance` is now using the working directory of the terminal foreground process on macOS
 
 ### Fixed
 
@@ -67,6 +72,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `Add` and `Subtract` keys are now named `NumpadAdd` and `NumpadSubtract` respectively
 - Feature checking when cross compiling between different operating systems
 - Crash when writing to the clipboard fails on Wayland
+- Crash with large negative `font.offset.x/y`
+- Visual bell getting stuck on the first frame
 
 ## 0.5.0
 
@@ -94,6 +101,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Option to run command on bell which can be set in `bell.command`
 - Fallback to program specified in `$SHELL` variable on Linux/BSD if it is present
 - Option `window.disable_vsync` to explicitly disable vsync
+- Ability to make selections while search is active
 
 ### Changed
 
@@ -114,6 +122,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - URLs are no longer highlighted without a clearly delimited scheme
 - Renamed config option `visual_bell` to `bell`
 - Moved config option `dynamic_title` to `window.dynamic_title`
+- When searching without vi mode, matches are only selected once search is cancelled
 
 ### Fixed
 
@@ -135,6 +144,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Ingoring of default FreeType properties
 - Alacritty crashing at startup when the configured font does not exist
 - Font size rounding error
+- Opening URLs while search is active
 
 ### Removed
 
