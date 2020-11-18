@@ -23,9 +23,10 @@ dependencies = [
 
 [[package]]
 name = "alacritty"
-version = "0.6.0-dev"
+version = "0.7.0-dev"
 dependencies = [
  "alacritty_terminal",
+ "bitflags",
  "clap",
  "copypasta",
  "crossfont",
@@ -54,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.11.0-dev"
+version = "0.11.1-dev"
 dependencies = [
  "base64",
  "bitflags",
