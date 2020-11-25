@@ -7,9 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## 0.7.0-dev
 
+### Added
+
+- Support for `~/` at the beginning of configuration file imports
+- New `cursor.style.blinking` option to set the default blinking state
+- New `cursor.blink_interval` option to configure the blinking frequency
+- Support for cursor blinking escapes (`CSI ? 12 h`, `CSI ? 12 l` and `CSI Ps SP q`)
+
+### Changed
+
+- Nonexistent config imports are ignored instead of raising an error
+
 ### Fixed
 
 - Wide characters sometimes being cut off
+- Preserve vi mode across terminal `reset`
 
 ## 0.6.0
 
