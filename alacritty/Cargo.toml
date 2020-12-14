@@ -21,7 +21,7 @@ fnv = "1"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.8"
 serde_json = "1"
-glutin = { version = "0.25.1", default-features = false, features = ["serde"] }
+glutin = { version = "0.26.0", default-features = false, features = ["serde"] }
 notify = "4"
 parking_lot = "0.11.0"
 crossfont = { version = "0.1.0", features = ["force_system_fontconfig"] }
@@ -59,7 +59,5 @@ default = ["wayland", "x11"]
 x11 = ["copypasta/x11", "glutin/x11", "x11-dl", "image"]
 wayland = ["copypasta/wayland", "glutin/wayland", "wayland-client"]
 winpty = ["alacritty_terminal/winpty"]
-# Enabling this feature makes shaders automatically reload when changed
-live-shader-reload = []
 nightly = []
 bench = []
