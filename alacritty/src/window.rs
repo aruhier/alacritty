@@ -19,11 +19,20 @@ use {
     crate::wayland_theme::AlacrittyWaylandTheme,
 };
 
+#[rustfmt::skip]
 #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-use x11_dl::xlib::{Display as XDisplay, PropModeReplace, XErrorEvent, Xlib};
+use {
+    std::io::Cursor,
+
+    x11_dl::xlib::{Display as XDisplay, PropModeReplace, XErrorEvent, Xlib},
+    glutin::window::Icon,
+    png::Decoder,
+};
 
 use std::fmt::{self, Display, Formatter};
 
+#[cfg(target_os = "macos")]
+use cocoa::base::{id, NO, YES};
 use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event_loop::EventLoop;
 #[cfg(target_os = "macos")]
@@ -34,6 +43,10 @@ use glutin::window::{
     CursorIcon, Fullscreen, UserAttentionType, Window as GlutinWindow, WindowBuilder, WindowId,
 };
 use glutin::{self, ContextBuilder, PossiblyCurrent, WindowedContext};
+#[cfg(target_os = "macos")]
+use objc::{msg_send, sel, sel_impl};
+#[cfg(target_os = "macos")]
+use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 #[cfg(windows)]
 use winapi::shared::minwindef::WORD;
 
@@ -44,11 +57,11 @@ use crate::config::window::{Decorations, WindowConfig};
 use crate::config::Config;
 use crate::gl;
 
-// It's required to be in this directory due to the `windows.rc` file.
+/// Window icon for `_NET_WM_ICON` property.
 #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-static WINDOW_ICON: &[u8] = include_bytes!("../alacritty.ico");
+static WINDOW_ICON: &[u8] = include_bytes!("../alacritty.png");
 
-// This should match the definition of IDI_ICON from `windows.rc`.
+/// This should match the definition of IDI_ICON from `windows.rc`.
 #[cfg(windows)]
 const IDI_ICON: WORD = 0x101;
 
@@ -261,14 +274,12 @@ impl Window {
     pub fn get_platform_window(title: &str, window_config: &WindowConfig) -> WindowBuilder {
         #[cfg(feature = "x11")]
         let icon = {
-            let image = image::load_from_memory_with_format(WINDOW_ICON, image::ImageFormat::Ico)
-                .expect("loading icon")
-                .to_rgba();
-            let (width, height) = image.dimensions();
-            glutin::window::Icon::from_rgba(image.into_raw(), width, height)
+            let decoder = Decoder::new(Cursor::new(WINDOW_ICON));
+            let (info, mut reader) = decoder.read_info().expect("invalid embedded icon");
+            let mut buf = vec![0; info.buffer_size()];
+            let _ = reader.next_frame(&mut buf);
+            Icon::from_rgba(buf, info.width, info.height)
         };
-
-        let class = &window_config.class;
 
         let builder = WindowBuilder::new()
             .with_title(title)
@@ -282,10 +293,13 @@ impl Window {
         let builder = builder.with_window_icon(icon.ok());
 
         #[cfg(feature = "wayland")]
-        let builder = builder.with_app_id(class.instance.clone());
+        let builder = builder.with_app_id(window_config.class.instance.to_owned());
 
         #[cfg(feature = "x11")]
-        let builder = builder.with_class(class.instance.clone(), class.general.clone());
+        let builder = builder.with_class(
+            window_config.class.instance.to_owned(),
+            window_config.class.general.to_owned(),
+        );
 
         #[cfg(feature = "x11")]
         let builder = match &window_config.gtk_theme_variant {
@@ -429,6 +443,22 @@ impl Window {
 
     pub fn resize(&self, size: PhysicalSize<u32>) {
         self.windowed_context.resize(size);
+    }
+
+    /// Disable macOS window shadows.
+    ///
+    /// This prevents rendering artifacts from showing up when the window is transparent.
+    #[cfg(target_os = "macos")]
+    pub fn set_has_shadow(&self, has_shadows: bool) {
+        let raw_window = match self.window().raw_window_handle() {
+            RawWindowHandle::MacOS(handle) => handle.ns_window as id,
+            _ => return,
+        };
+
+        let value = if has_shadows { YES } else { NO };
+        unsafe {
+            let _: () = msg_send![raw_window, setHasShadow: value];
+        }
     }
 
     fn window(&self) -> &GlutinWindow {

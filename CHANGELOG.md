@@ -15,10 +15,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Support for cursor blinking escapes (`CSI ? 12 h`, `CSI ? 12 l` and `CSI Ps SP q`)
 - IME support on Windows
 - Urgency support on Windows
+- Customizable keybindings for search
+- History for search mode, bound to ^P/^N/Up/Down by default
 
 ### Changed
 
 - Nonexistent config imports are ignored instead of raising an error
+- Value for disabling logging with `config.log_level` is `Off` instead of `None`
+- Missing glyph symbols are no longer drawn for zerowidth characters
 
 ### Fixed
 
@@ -35,6 +39,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Window being always on top during alt-tab on Windows
 - Cursor position not reported to apps when mouse is moved with button held outside of window
 - No live config update when starting Alacritty with a broken configuration file
+- PTY not drained to the end with the `--hold` flag enabled
+- High CPU usage on BSD with live config reload enabled
+- Alacritty not discarding invalid escape sequences starting with ESC
+- Crash due to clipboard not being properly released on Wayland
+- Shadow artifacts when resizing transparent windows on macOS
+- Missing glyph symbols not being rendered for missing glyphs on macOS and Windows
 
 ### Removed
 
@@ -45,6 +55,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     * `--dimensions`
     * `--position`
 - `live-shader-reload` feature
+- Config option `dynamic_title`, you should use `window.dynamic_title` instead
+- Config option `scrolling.faux_multiplier`, which was replaced by escape `CSI ? 1007 h/l`
 
 ## 0.6.0
 

@@ -15,7 +15,6 @@ use log::trace;
 use glutin::dpi::PhysicalPosition;
 use glutin::event::{
     ElementState, KeyboardInput, ModifiersState, MouseButton, MouseScrollDelta, TouchPhase,
-    VirtualKeyCode,
 };
 use glutin::event_loop::EventLoopWindowTarget;
 #[cfg(target_os = "macos")]
@@ -32,7 +31,7 @@ use alacritty_terminal::term::{ClipboardType, SizeInfo, Term};
 use alacritty_terminal::vi_mode::ViMotion;
 
 use crate::clipboard::Clipboard;
-use crate::config::{Action, Binding, Config, Key, ViAction};
+use crate::config::{Action, Binding, BindingMode, Config, Key, SearchAction, ViAction};
 use crate::daemon::start_daemon;
 use crate::event::{ClickState, Event, Mouse, TYPING_SEARCH_DELAY};
 use crate::message_bar::{self, Message};
@@ -97,9 +96,10 @@ pub trait ActionContext<T: EventListener> {
     fn start_search(&mut self, direction: Direction);
     fn confirm_search(&mut self);
     fn cancel_search(&mut self);
-    fn push_search(&mut self, c: char);
-    fn pop_search(&mut self);
-    fn pop_word_search(&mut self);
+    fn search_input(&mut self, c: char);
+    fn search_pop_word(&mut self);
+    fn search_history_previous(&mut self);
+    fn search_history_next(&mut self);
     fn advance_search_origin(&mut self, direction: Direction);
     fn search_direction(&self) -> Direction;
     fn search_active(&self) -> bool;
@@ -145,17 +145,6 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.scroll(Scroll::Bottom);
                 ctx.write_to_pty(s.clone().into_bytes())
             },
-            Action::Copy => ctx.copy_selection(ClipboardType::Clipboard),
-            #[cfg(not(any(target_os = "macos", windows)))]
-            Action::CopySelection => ctx.copy_selection(ClipboardType::Selection),
-            Action::Paste => {
-                let text = ctx.clipboard_mut().load(ClipboardType::Clipboard);
-                paste(ctx, &text);
-            },
-            Action::PasteSelection => {
-                let text = ctx.clipboard_mut().load(ClipboardType::Selection);
-                paste(ctx, &text);
-            },
             Action::Command(ref program) => {
                 let args = program.args();
                 let program = program.program();
@@ -163,7 +152,6 @@ impl<T: EventListener> Execute<T> for Action {
 
                 start_daemon(program, args);
             },
-            Action::ClearSelection => ctx.clear_selection(),
             Action::ToggleViMode => ctx.terminal_mut().toggle_vi_mode(),
             Action::ViMotion(motion) => {
                 ctx.on_typing_start();
@@ -221,8 +209,39 @@ impl<T: EventListener> Execute<T> for Action {
                     ctx.terminal_mut().vi_goto_point(*regex_match.end());
                 }
             },
+            Action::SearchAction(SearchAction::SearchFocusNext) => {
+                ctx.advance_search_origin(ctx.search_direction());
+            },
+            Action::SearchAction(SearchAction::SearchFocusPrevious) => {
+                let direction = ctx.search_direction().opposite();
+                ctx.advance_search_origin(direction);
+            },
+            Action::SearchAction(SearchAction::SearchConfirm) => ctx.confirm_search(),
+            Action::SearchAction(SearchAction::SearchCancel) => ctx.cancel_search(),
+            Action::SearchAction(SearchAction::SearchClear) => {
+                let direction = ctx.search_direction();
+                ctx.cancel_search();
+                ctx.start_search(direction);
+            },
+            Action::SearchAction(SearchAction::SearchDeleteWord) => ctx.search_pop_word(),
+            Action::SearchAction(SearchAction::SearchHistoryPrevious) => {
+                ctx.search_history_previous()
+            },
+            Action::SearchAction(SearchAction::SearchHistoryNext) => ctx.search_history_next(),
             Action::SearchForward => ctx.start_search(Direction::Right),
             Action::SearchBackward => ctx.start_search(Direction::Left),
+            Action::Copy => ctx.copy_selection(ClipboardType::Clipboard),
+            #[cfg(not(any(target_os = "macos", windows)))]
+            Action::CopySelection => ctx.copy_selection(ClipboardType::Selection),
+            Action::ClearSelection => ctx.clear_selection(),
+            Action::Paste => {
+                let text = ctx.clipboard_mut().load(ClipboardType::Clipboard);
+                paste(ctx, &text);
+            },
+            Action::PasteSelection => {
+                let text = ctx.clipboard_mut().load(ClipboardType::Selection);
+                paste(ctx, &text);
+            },
             Action::ToggleFullscreen => ctx.window_mut().toggle_fullscreen(),
             #[cfg(target_os = "macos")]
             Action::ToggleSimpleFullscreen => ctx.window_mut().toggle_simple_fullscreen(),
@@ -315,7 +334,11 @@ impl<T: EventListener> Execute<T> for Action {
 }
 
 fn paste<T: EventListener, A: ActionContext<T>>(ctx: &mut A, contents: &str) {
-    if ctx.terminal().mode().contains(TermMode::BRACKETED_PASTE) {
+    if ctx.search_active() {
+        for c in contents.chars() {
+            ctx.search_input(c);
+        }
+    } else if ctx.terminal().mode().contains(TermMode::BRACKETED_PASTE) {
         ctx.write_to_pty(&b"\x1b[200~"[..]);
         ctx.write_to_pty(contents.replace("\x1b", "").into_bytes());
         ctx.write_to_pty(&b"\x1b[201~"[..]);
@@ -538,10 +561,10 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
                     self.ctx.mouse_mut().last_click_button = button;
                     ClickState::Click
                 },
-                ClickState::Click if elapsed < mouse_config.double_click.threshold => {
+                ClickState::Click if elapsed < mouse_config.double_click.threshold() => {
                     ClickState::DoubleClick
                 },
-                ClickState::DoubleClick if elapsed < mouse_config.triple_click.threshold => {
+                ClickState::DoubleClick if elapsed < mouse_config.triple_click.threshold() => {
                     ClickState::TripleClick
                 },
                 _ => ClickState::Click,
@@ -691,13 +714,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
             && !self.ctx.modifiers().shift()
         {
-            let multiplier = f64::from(
-                self.ctx
-                    .config()
-                    .scrolling
-                    .faux_multiplier()
-                    .unwrap_or_else(|| self.ctx.config().scrolling.multiplier()),
-            );
+            let multiplier = f64::from(self.ctx.config().scrolling.multiplier);
             self.ctx.mouse_mut().scroll_px += new_scroll_px * multiplier;
 
             let cmd = if new_scroll_px > 0. { b'A' } else { b'B' };
@@ -711,7 +728,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             }
             self.ctx.write_to_pty(content);
         } else {
-            let multiplier = f64::from(self.ctx.config().scrolling.multiplier());
+            let multiplier = f64::from(self.ctx.config().scrolling.multiplier);
             self.ctx.mouse_mut().scroll_px += new_scroll_px * multiplier;
 
             let lines = self.ctx.mouse().scroll_px / height;
@@ -796,57 +813,14 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
 
     /// Process key input.
     pub fn key_input(&mut self, input: KeyboardInput) {
+        // Reset search delay when the user is still typing.
+        if self.ctx.search_active() {
+            if let Some(timer) = self.ctx.scheduler_mut().get_mut(TimerId::DelayedSearch) {
+                timer.deadline = Instant::now() + TYPING_SEARCH_DELAY;
+            }
+        }
+
         match input.state {
-            ElementState::Pressed if self.ctx.search_active() => {
-                match (input.virtual_keycode, *self.ctx.modifiers()) {
-                    (Some(VirtualKeyCode::Back), _) => {
-                        self.ctx.pop_search();
-                        *self.ctx.suppress_chars() = true;
-                    },
-                    (Some(VirtualKeyCode::Return), ModifiersState::SHIFT)
-                        if !self.ctx.terminal().mode().contains(TermMode::VI) =>
-                    {
-                        let direction = self.ctx.search_direction().opposite();
-                        self.ctx.advance_search_origin(direction);
-                        *self.ctx.suppress_chars() = true;
-                    }
-                    (Some(VirtualKeyCode::Return), _)
-                    | (Some(VirtualKeyCode::J), ModifiersState::CTRL) => {
-                        if self.ctx.terminal().mode().contains(TermMode::VI) {
-                            self.ctx.confirm_search();
-                        } else {
-                            self.ctx.advance_search_origin(self.ctx.search_direction());
-                        }
-
-                        *self.ctx.suppress_chars() = true;
-                    },
-                    (Some(VirtualKeyCode::Escape), _)
-                    | (Some(VirtualKeyCode::C), ModifiersState::CTRL) => {
-                        self.ctx.cancel_search();
-                        *self.ctx.suppress_chars() = true;
-                    },
-                    (Some(VirtualKeyCode::U), ModifiersState::CTRL) => {
-                        let direction = self.ctx.search_direction();
-                        self.ctx.cancel_search();
-                        self.ctx.start_search(direction);
-                        *self.ctx.suppress_chars() = true;
-                    },
-                    (Some(VirtualKeyCode::H), ModifiersState::CTRL) => {
-                        self.ctx.pop_search();
-                        *self.ctx.suppress_chars() = true;
-                    },
-                    (Some(VirtualKeyCode::W), ModifiersState::CTRL) => {
-                        self.ctx.pop_word_search();
-                        *self.ctx.suppress_chars() = true;
-                    },
-                    _ => (),
-                }
-
-                // Reset search delay when the user is still typing.
-                if let Some(timer) = self.ctx.scheduler_mut().get_mut(TimerId::DelayedSearch) {
-                    timer.deadline = Instant::now() + TYPING_SEARCH_DELAY;
-                }
-            },
             ElementState::Pressed => {
                 *self.ctx.received_count() = 0;
                 self.process_key_bindings(input);
@@ -877,14 +851,8 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         let suppress_chars = *self.ctx.suppress_chars();
         let search_active = self.ctx.search_active();
         if suppress_chars || self.ctx.terminal().mode().contains(TermMode::VI) || search_active {
-            if search_active {
-                // Skip control characters.
-                let c_decimal = c as isize;
-                let is_printable = (c_decimal >= 0x20 && c_decimal < 0x7f) || c_decimal >= 0xa0;
-
-                if !suppress_chars && is_printable {
-                    self.ctx.push_search(c);
-                }
+            if search_active && !suppress_chars {
+                self.ctx.search_input(c);
             }
 
             *self.ctx.suppress_chars() = false;
@@ -904,7 +872,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             c.encode_utf8(&mut bytes[..]);
         }
 
-        if self.ctx.config().ui_config.alt_send_esc()
+        if self.ctx.config().ui_config.alt_send_esc
             && *self.ctx.received_count() == 0
             && self.ctx.modifiers().alt()
             && utf8_len == 1
@@ -922,11 +890,12 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
     /// The provided mode, mods, and key must match what is allowed by a binding
     /// for its action to be executed.
     fn process_key_bindings(&mut self, input: KeyboardInput) {
+        let mode = BindingMode::new(self.ctx.terminal().mode(), self.ctx.search_active());
         let mods = *self.ctx.modifiers();
         let mut suppress_chars = None;
 
-        for i in 0..self.ctx.config().ui_config.key_bindings.len() {
-            let binding = &self.ctx.config().ui_config.key_bindings[i];
+        for i in 0..self.ctx.config().ui_config.key_bindings().len() {
+            let binding = &self.ctx.config().ui_config.key_bindings()[i];
 
             let key = match (binding.trigger, input.virtual_keycode) {
                 (Key::Scancode(_), _) => Key::Scancode(input.scancode),
@@ -934,7 +903,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
                 _ => continue,
             };
 
-            if binding.is_triggered_by(*self.ctx.terminal().mode(), mods, &key) {
+            if binding.is_triggered_by(mode, mods, &key) {
                 // Binding was triggered; run the action.
                 let binding = binding.clone();
                 binding.execute(&mut self.ctx);
@@ -953,17 +922,12 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
     /// The provided mode, mods, and key must match what is allowed by a binding
     /// for its action to be executed.
     fn process_mouse_bindings(&mut self, button: MouseButton) {
-        // Ignore bindings while search is active.
-        if self.ctx.search_active() {
-            return;
-        }
-
-        let mods = *self.ctx.modifiers();
-        let mode = *self.ctx.terminal().mode();
+        let mode = BindingMode::new(self.ctx.terminal().mode(), self.ctx.search_active());
         let mouse_mode = self.ctx.mouse_mode();
+        let mods = *self.ctx.modifiers();
 
-        for i in 0..self.ctx.config().ui_config.mouse_bindings.len() {
-            let mut binding = self.ctx.config().ui_config.mouse_bindings[i].clone();
+        for i in 0..self.ctx.config().ui_config.mouse_bindings().len() {
+            let mut binding = self.ctx.config().ui_config.mouse_bindings()[i].clone();
 
             // Require shift for all modifiers when mouse mode is active.
             if mouse_mode {
@@ -1102,7 +1066,6 @@ mod tests {
     use alacritty_terminal::event::Event as TerminalEvent;
     use alacritty_terminal::selection::Selection;
 
-    use crate::config::ClickHandler;
     use crate::message_bar::MessageBuffer;
 
     const KEY: VirtualKeyCode = VirtualKeyCode::Key0;
@@ -1151,11 +1114,13 @@ mod tests {
 
         fn cancel_search(&mut self) {}
 
-        fn push_search(&mut self, _c: char) {}
+        fn search_input(&mut self, _c: char) {}
 
-        fn pop_search(&mut self) {}
+        fn search_pop_word(&mut self) {}
 
-        fn pop_word_search(&mut self) {}
+        fn search_history_previous(&mut self) {}
+
+        fn search_history_next(&mut self) {}
 
         fn advance_search_origin(&mut self, _direction: Direction) {}
 
@@ -1279,18 +1244,8 @@ mod tests {
         } => {
             #[test]
             fn $name() {
-                let mut cfg = Config::default();
-                cfg.ui_config.mouse = crate::config::Mouse {
-                    double_click: ClickHandler {
-                        threshold: Duration::from_millis(1000),
-                    },
-                    triple_click: ClickHandler {
-                        threshold: Duration::from_millis(1000),
-                    },
-                    hide_when_typing: false,
-                    url: Default::default(),
-                };
-
+                let mut clipboard = Clipboard::new_nop();
+                let cfg = Config::default();
                 let size = SizeInfo::new(
                     21.0,
                     51.0,
@@ -1300,8 +1255,6 @@ mod tests {
                     0.,
                     false,
                 );
-
-                let mut clipboard = Clipboard::new_nop();
 
                 let mut terminal = Term::new(&cfg, size, MockEventProxy);
 
@@ -1462,65 +1415,65 @@ mod tests {
 
     test_process_binding! {
         name: process_binding_nomode_shiftmod_require_shift,
-        binding: Binding { trigger: KEY, mods: ModifiersState::SHIFT, action: Action::from("\x1b[1;2D"), mode: TermMode::NONE, notmode: TermMode::NONE },
+        binding: Binding { trigger: KEY, mods: ModifiersState::SHIFT, action: Action::from("\x1b[1;2D"), mode: BindingMode::empty(), notmode: BindingMode::empty() },
         triggers: true,
-        mode: TermMode::NONE,
+        mode: BindingMode::empty(),
         mods: ModifiersState::SHIFT,
     }
 
     test_process_binding! {
         name: process_binding_nomode_nomod_require_shift,
-        binding: Binding { trigger: KEY, mods: ModifiersState::SHIFT, action: Action::from("\x1b[1;2D"), mode: TermMode::NONE, notmode: TermMode::NONE },
+        binding: Binding { trigger: KEY, mods: ModifiersState::SHIFT, action: Action::from("\x1b[1;2D"), mode: BindingMode::empty(), notmode: BindingMode::empty() },
         triggers: false,
-        mode: TermMode::NONE,
+        mode: BindingMode::empty(),
         mods: ModifiersState::empty(),
     }
 
     test_process_binding! {
         name: process_binding_nomode_controlmod,
-        binding: Binding { trigger: KEY, mods: ModifiersState::CTRL, action: Action::from("\x1b[1;5D"), mode: TermMode::NONE, notmode: TermMode::NONE },
+        binding: Binding { trigger: KEY, mods: ModifiersState::CTRL, action: Action::from("\x1b[1;5D"), mode: BindingMode::empty(), notmode: BindingMode::empty() },
         triggers: true,
-        mode: TermMode::NONE,
+        mode: BindingMode::empty(),
         mods: ModifiersState::CTRL,
     }
 
     test_process_binding! {
         name: process_binding_nomode_nomod_require_not_appcursor,
-        binding: Binding { trigger: KEY, mods: ModifiersState::empty(), action: Action::from("\x1b[D"), mode: TermMode::NONE, notmode: TermMode::APP_CURSOR },
+        binding: Binding { trigger: KEY, mods: ModifiersState::empty(), action: Action::from("\x1b[D"), mode: BindingMode::empty(), notmode: BindingMode::APP_CURSOR },
         triggers: true,
-        mode: TermMode::NONE,
+        mode: BindingMode::empty(),
         mods: ModifiersState::empty(),
     }
 
     test_process_binding! {
         name: process_binding_appcursormode_nomod_require_appcursor,
-        binding: Binding { trigger: KEY, mods: ModifiersState::empty(), action: Action::from("\x1bOD"), mode: TermMode::APP_CURSOR, notmode: TermMode::NONE },
+        binding: Binding { trigger: KEY, mods: ModifiersState::empty(), action: Action::from("\x1bOD"), mode: BindingMode::APP_CURSOR, notmode: BindingMode::empty() },
         triggers: true,
-        mode: TermMode::APP_CURSOR,
+        mode: BindingMode::APP_CURSOR,
         mods: ModifiersState::empty(),
     }
 
     test_process_binding! {
         name: process_binding_nomode_nomod_require_appcursor,
-        binding: Binding { trigger: KEY, mods: ModifiersState::empty(), action: Action::from("\x1bOD"), mode: TermMode::APP_CURSOR, notmode: TermMode::NONE },
+        binding: Binding { trigger: KEY, mods: ModifiersState::empty(), action: Action::from("\x1bOD"), mode: BindingMode::APP_CURSOR, notmode: BindingMode::empty() },
         triggers: false,
-        mode: TermMode::NONE,
+        mode: BindingMode::empty(),
         mods: ModifiersState::empty(),
     }
 
     test_process_binding! {
         name: process_binding_appcursormode_appkeypadmode_nomod_require_appcursor,
-        binding: Binding { trigger: KEY, mods: ModifiersState::empty(), action: Action::from("\x1bOD"), mode: TermMode::APP_CURSOR, notmode: TermMode::NONE },
+        binding: Binding { trigger: KEY, mods: ModifiersState::empty(), action: Action::from("\x1bOD"), mode: BindingMode::APP_CURSOR, notmode: BindingMode::empty() },
         triggers: true,
-        mode: TermMode::APP_CURSOR | TermMode::APP_KEYPAD,
+        mode: BindingMode::APP_CURSOR | BindingMode::APP_KEYPAD,
         mods: ModifiersState::empty(),
     }
 
     test_process_binding! {
         name: process_binding_fail_with_extra_mods,
-        binding: Binding { trigger: KEY, mods: ModifiersState::LOGO, action: Action::from("arst"), mode: TermMode::NONE, notmode: TermMode::NONE },
+        binding: Binding { trigger: KEY, mods: ModifiersState::LOGO, action: Action::from("arst"), mode: BindingMode::empty(), notmode: BindingMode::empty() },
         triggers: false,
-        mode: TermMode::NONE,
+        mode: BindingMode::empty(),
         mods: ModifiersState::ALT | ModifiersState::LOGO,
     }
 }
