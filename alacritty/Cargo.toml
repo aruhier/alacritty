@@ -1,16 +1,16 @@
 [package]
 name = "alacritty"
-version = "0.7.0-dev"
+version = "0.8.0-dev"
 authors = ["Christian Duerr <contact@christianduerr.com>", "Joe Wilm <joe@jwilm.com>"]
 license = "Apache-2.0"
-description = "GPU-accelerated terminal emulator"
+description = "A fast, cross-platform, OpenGL terminal emulator"
 readme = "README.md"
 homepage = "https://github.com/alacritty/alacritty"
 edition = "2018"
 
 [dependencies.alacritty_terminal]
 path = "../alacritty_terminal"
-version = "0.11.1-dev"
+version = "0.12.1-dev"
 default-features = false
 
 [dependencies.alacritty_config_derive]
@@ -64,6 +64,5 @@ embed-resource = "1.3"
 default = ["wayland", "x11"]
 x11 = ["copypasta/x11", "glutin/x11", "x11-dl", "png"]
 wayland = ["copypasta/wayland", "glutin/wayland", "wayland-client"]
-winpty = ["alacritty_terminal/winpty"]
 nightly = []
 bench = []

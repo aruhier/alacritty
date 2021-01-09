@@ -16,6 +16,7 @@ pub struct Colors {
     pub dim: Option<DimColors>,
     pub indexed_colors: Vec<IndexedColor>,
     pub search: SearchColors,
+    pub line_indicator: LineIndicatorColors,
 }
 
 impl Colors {
@@ -26,6 +27,12 @@ impl Colors {
     pub fn search_bar_background(&self) -> Rgb {
         self.search.bar.background.unwrap_or(self.primary.foreground)
     }
+}
+
+#[derive(ConfigDeserialize, Copy, Clone, Default, Debug, PartialEq, Eq)]
+pub struct LineIndicatorColors {
+    pub foreground: Option<Rgb>,
+    pub background: Option<Rgb>,
 }
 
 #[derive(Deserialize, Copy, Clone, Default, Debug, PartialEq, Eq)]
@@ -178,7 +185,7 @@ impl Default for BrightColors {
     }
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(ConfigDeserialize, Clone, Debug, PartialEq, Eq)]
 pub struct DimColors {
     pub black: Rgb,
     pub red: Rgb,
@@ -188,4 +195,19 @@ pub struct DimColors {
     pub magenta: Rgb,
     pub cyan: Rgb,
     pub white: Rgb,
+}
+
+impl Default for DimColors {
+    fn default() -> Self {
+        DimColors {
+            black: Rgb { r: 0x13, g: 0x14, b: 0x15 },
+            red: Rgb { r: 0x86, g: 0x43, b: 0x43 },
+            green: Rgb { r: 0x77, g: 0x7c, b: 0x44 },
+            yellow: Rgb { r: 0x9e, g: 0x82, b: 0x4c },
+            blue: Rgb { r: 0x55, g: 0x6a, b: 0x7d },
+            magenta: Rgb { r: 0x75, g: 0x61, b: 0x7b },
+            cyan: Rgb { r: 0x5b, g: 0x7d, b: 0x78 },
+            white: Rgb { r: 0x82, g: 0x84, b: 0x82 },
+        }
+    }
 }

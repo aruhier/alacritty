@@ -5,7 +5,15 @@ The sections should follow the order `Packaging`, `Added`, `Changed`, `Fixed` an
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## 0.7.0-dev
+## 0.8.0-dev
+
+## 0.7.1
+
+### Fixed
+
+- Jumping between matches in backward vi search
+
+## 0.7.0
 
 ### Added
 
@@ -17,6 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Urgency support on Windows
 - Customizable keybindings for search
 - History for search mode, bound to ^P/^N/Up/Down by default
+- Default binding to cancel search on Ctrl+C
+- History position indicator for search and vi mode
 
 ### Changed
 
@@ -45,6 +55,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Crash due to clipboard not being properly released on Wayland
 - Shadow artifacts when resizing transparent windows on macOS
 - Missing glyph symbols not being rendered for missing glyphs on macOS and Windows
+- Underline cursor being obscured by underline
+- Cursor not being rendered with a lot of unicode glyphs visible
+- IME input swallowed after triggering a key binding
+- Crash on Wayland due to non-standard fontconfig configuration
+- Search without vi mode not jumping properly between all matches
 
 ### Removed
 
@@ -57,6 +72,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `live-shader-reload` feature
 - Config option `dynamic_title`, you should use `window.dynamic_title` instead
 - Config option `scrolling.faux_multiplier`, which was replaced by escape `CSI ? 1007 h/l`
+- WinPTY support on Windows
 
 ## 0.6.0
 

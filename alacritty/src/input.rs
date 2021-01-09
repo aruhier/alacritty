@@ -24,10 +24,9 @@ use glutin::window::CursorIcon;
 use alacritty_terminal::ansi::{ClearMode, Handler};
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
+use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::SelectionType;
-use alacritty_terminal::term::mode::TermMode;
-use alacritty_terminal::term::{ClipboardType, SizeInfo, Term};
+use alacritty_terminal::term::{ClipboardType, SizeInfo, Term, TermMode};
 use alacritty_terminal::vi_mode::ViMotion;
 
 use crate::clipboard::Clipboard;
@@ -176,26 +175,39 @@ impl<T: EventListener> Execute<T> for Action {
                 }
             },
             Action::ViAction(ViAction::SearchNext) => {
-                let origin = ctx.terminal().visible_to_buffer(ctx.terminal().vi_mode_cursor.point);
+                let terminal = ctx.terminal();
                 let direction = ctx.search_direction();
+                let vi_point = terminal.visible_to_buffer(terminal.vi_mode_cursor.point);
+                let origin = match direction {
+                    Direction::Right => vi_point.add_absolute(terminal, Boundary::Wrap, 1),
+                    Direction::Left => vi_point.sub_absolute(terminal, Boundary::Wrap, 1),
+                };
 
-                let regex_match = ctx.terminal().search_next(origin, direction, Side::Left, None);
+                let regex_match = terminal.search_next(origin, direction, Side::Left, None);
                 if let Some(regex_match) = regex_match {
                     ctx.terminal_mut().vi_goto_point(*regex_match.start());
                 }
             },
             Action::ViAction(ViAction::SearchPrevious) => {
-                let origin = ctx.terminal().visible_to_buffer(ctx.terminal().vi_mode_cursor.point);
+                let terminal = ctx.terminal();
                 let direction = ctx.search_direction().opposite();
+                let vi_point = terminal.visible_to_buffer(terminal.vi_mode_cursor.point);
+                let origin = match direction {
+                    Direction::Right => vi_point.add_absolute(terminal, Boundary::Wrap, 1),
+                    Direction::Left => vi_point.sub_absolute(terminal, Boundary::Wrap, 1),
+                };
 
-                let regex_match = ctx.terminal().search_next(origin, direction, Side::Left, None);
+                let regex_match = terminal.search_next(origin, direction, Side::Left, None);
                 if let Some(regex_match) = regex_match {
                     ctx.terminal_mut().vi_goto_point(*regex_match.start());
                 }
             },
             Action::ViAction(ViAction::SearchStart) => {
                 let terminal = ctx.terminal();
-                let origin = terminal.visible_to_buffer(ctx.terminal().vi_mode_cursor.point);
+                let origin = terminal
+                    .visible_to_buffer(terminal.vi_mode_cursor.point)
+                    .sub_absolute(terminal, Boundary::Wrap, 1);
+
                 let regex_match = terminal.search_next(origin, Direction::Left, Side::Left, None);
                 if let Some(regex_match) = regex_match {
                     ctx.terminal_mut().vi_goto_point(*regex_match.start());
@@ -203,7 +215,10 @@ impl<T: EventListener> Execute<T> for Action {
             },
             Action::ViAction(ViAction::SearchEnd) => {
                 let terminal = ctx.terminal();
-                let origin = terminal.visible_to_buffer(ctx.terminal().vi_mode_cursor.point);
+                let origin = terminal
+                    .visible_to_buffer(terminal.vi_mode_cursor.point)
+                    .add_absolute(terminal, Boundary::Wrap, 1);
+
                 let regex_match = terminal.search_next(origin, Direction::Right, Side::Right, None);
                 if let Some(regex_match) = regex_match {
                     ctx.terminal_mut().vi_goto_point(*regex_match.end());
@@ -825,7 +840,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
                 *self.ctx.received_count() = 0;
                 self.process_key_bindings(input);
             },
-            ElementState::Released => (),
+            ElementState::Released => *self.ctx.suppress_chars() = false,
         }
     }
 
@@ -854,8 +869,6 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             if search_active && !suppress_chars {
                 self.ctx.search_input(c);
             }
-
-            *self.ctx.suppress_chars() = false;
 
             return;
         }
@@ -1258,8 +1271,10 @@ mod tests {
 
                 let mut terminal = Term::new(&cfg, size, MockEventProxy);
 
-                let mut mouse = Mouse::default();
-                mouse.click_state = $initial_state;
+                let mut mouse = Mouse {
+                    click_state: $initial_state,
+                    ..Mouse::default()
+                };
 
                 let mut selection = None;
 
