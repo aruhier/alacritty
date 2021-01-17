@@ -1,5 +1,5 @@
 <p align="center">
-    <img width="200" alt="Alacritty Logo" src="extra/logo/compat/alacritty-term+scanlines.png">
+    <img width="200" alt="Alacritty Logo" src="https://raw.githubusercontent.com/alacritty/alacritty/master/extra/logo/compat/alacritty-term%2Bscanlines.png">
 </p>
 
 <h1 align="center">Alacritty - A fast, cross-platform, OpenGL terminal emulator</h1>
@@ -46,6 +46,9 @@ Prebuilt binaries for macOS and Windows can also be downloaded from the
 
 For everyone else, the detailed instructions to install Alacritty can be found
 [here](INSTALL.md).
+
+Since Alacritty uses OpenGL to render the terminal content on all platforms, it
+is currently not possible to run it without support for at least OpenGL 3.3.
 
 ## Configuration
 
