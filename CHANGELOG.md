@@ -7,13 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## 0.8.0-dev
 
+### Packaging
+
+- Minimum Rust version has been bumped to 1.45.0
+
 ### Added
 
 - IME composition preview not appearing on Windows
+- Synchronized terminal updates using `DCS = 1 s ST`/`DCS = 2 s ST`
 
 ### Fixed
 
 - Alacritty failing to start on X11 with invalid DPI reported by XRandr
+- Text selected after search without any match
+- Incorrect vi cursor position after leaving search
 
 ### Removed
 
