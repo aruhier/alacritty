@@ -10,8 +10,6 @@ use std::cmp::{max, min, Ordering};
 use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
-use log::trace;
-
 use glutin::dpi::PhysicalPosition;
 use glutin::event::{
     ElementState, KeyboardInput, ModifiersState, MouseButton, MouseScrollDelta, TouchPhase,
@@ -31,8 +29,9 @@ use alacritty_terminal::term::{ClipboardType, SizeInfo, Term, TermMode};
 use alacritty_terminal::vi_mode::ViMotion;
 
 use crate::clipboard::Clipboard;
-use crate::config::{Action, Binding, BindingMode, Config, Key, SearchAction, ViAction};
+use crate::config::{Action, BindingMode, Config, Key, SearchAction, ViAction};
 use crate::daemon::start_daemon;
+use crate::display::hint::HintState;
 use crate::display::window::Window;
 use crate::event::{ClickState, Event, Mouse, TYPING_SEARCH_DELAY};
 use crate::message_bar::{self, Message};
@@ -72,7 +71,6 @@ pub trait ActionContext<T: EventListener> {
     fn selection_is_empty(&self) -> bool;
     fn mouse_mut(&mut self) -> &mut Mouse;
     fn mouse(&self) -> &Mouse;
-    fn mouse_coords(&self) -> Option<Point>;
     fn received_count(&mut self) -> &mut usize;
     fn suppress_chars(&mut self) -> &mut bool;
     fn modifiers(&mut self) -> &mut ModifiersState;
@@ -101,29 +99,14 @@ pub trait ActionContext<T: EventListener> {
     fn search_pop_word(&mut self) {}
     fn search_history_previous(&mut self) {}
     fn search_history_next(&mut self) {}
-    fn search_next(
-        &mut self,
-        origin: Point<usize>,
-        direction: Direction,
-        side: Side,
-    ) -> Option<Match>;
+    fn search_next(&mut self, origin: Point, direction: Direction, side: Side) -> Option<Match>;
     fn advance_search_origin(&mut self, _direction: Direction) {}
     fn search_direction(&self) -> Direction;
     fn search_active(&self) -> bool;
     fn on_typing_start(&mut self) {}
     fn toggle_vi_mode(&mut self) {}
-}
-
-trait Execute<T: EventListener> {
-    fn execute<A: ActionContext<T>>(&self, ctx: &mut A);
-}
-
-impl<T, U: EventListener> Execute<U> for Binding<T> {
-    /// Execute the action associate with this binding.
-    #[inline]
-    fn execute<A: ActionContext<U>>(&self, ctx: &mut A) {
-        self.action.execute(ctx)
-    }
+    fn hint_state(&mut self) -> &mut HintState;
+    fn hint_input(&mut self, _character: char) {}
 }
 
 impl Action {
@@ -132,8 +115,7 @@ impl Action {
         A: ActionContext<T>,
         T: EventListener,
     {
-        let cursor_point = ctx.terminal().vi_mode_cursor.point;
-        ctx.toggle_selection(ty, cursor_point, Side::Left);
+        ctx.toggle_selection(ty, ctx.terminal().vi_mode_cursor.point, Side::Left);
 
         // Make sure initial selection is not empty.
         if let Some(selection) = &mut ctx.terminal_mut().selection {
@@ -142,55 +124,59 @@ impl Action {
     }
 }
 
+trait Execute<T: EventListener> {
+    fn execute<A: ActionContext<T>>(&self, ctx: &mut A);
+}
+
 impl<T: EventListener> Execute<T> for Action {
     #[inline]
     fn execute<A: ActionContext<T>>(&self, ctx: &mut A) {
-        match *self {
-            Action::Esc(ref s) => {
+        match self {
+            Action::Esc(s) => {
                 ctx.on_typing_start();
 
                 ctx.clear_selection();
                 ctx.scroll(Scroll::Bottom);
                 ctx.write_to_pty(s.clone().into_bytes())
             },
-            Action::Command(ref program) => {
-                let args = program.args();
-                let program = program.program();
-                trace!("Running command {} with args {:?}", program, args);
-
-                start_daemon(program, args);
+            Action::Command(program) => start_daemon(program.program(), program.args()),
+            Action::Hint(hint) => {
+                ctx.hint_state().start(hint.clone());
+                ctx.mark_dirty();
             },
             Action::ToggleViMode => ctx.toggle_vi_mode(),
             Action::ViMotion(motion) => {
                 ctx.on_typing_start();
-                ctx.terminal_mut().vi_motion(motion);
+                ctx.terminal_mut().vi_motion(*motion);
                 ctx.mark_dirty();
             },
             Action::ViAction(ViAction::ToggleNormalSelection) => {
-                Self::toggle_selection(ctx, SelectionType::Simple)
+                Self::toggle_selection(ctx, SelectionType::Simple);
             },
             Action::ViAction(ViAction::ToggleLineSelection) => {
-                Self::toggle_selection(ctx, SelectionType::Lines)
+                Self::toggle_selection(ctx, SelectionType::Lines);
             },
             Action::ViAction(ViAction::ToggleBlockSelection) => {
-                Self::toggle_selection(ctx, SelectionType::Block)
+                Self::toggle_selection(ctx, SelectionType::Block);
             },
             Action::ViAction(ViAction::ToggleSemanticSelection) => {
-                Self::toggle_selection(ctx, SelectionType::Semantic)
+                Self::toggle_selection(ctx, SelectionType::Semantic);
             },
             Action::ViAction(ViAction::Open) => {
                 ctx.mouse_mut().block_url_launcher = false;
-                if let Some(url) = ctx.urls().find_at(ctx.terminal().vi_mode_cursor.point) {
+                let vi_point = ctx.terminal().vi_mode_cursor.point;
+                let line = (vi_point.line + ctx.terminal().grid().display_offset()).0 as usize;
+                if let Some(url) = ctx.urls().find_at(Point::new(line, vi_point.column)) {
                     ctx.launch_url(url);
                 }
             },
             Action::ViAction(ViAction::SearchNext) => {
                 let terminal = ctx.terminal();
                 let direction = ctx.search_direction();
-                let vi_point = terminal.visible_to_buffer(terminal.vi_mode_cursor.point);
+                let vi_point = terminal.vi_mode_cursor.point;
                 let origin = match direction {
-                    Direction::Right => vi_point.add_absolute(terminal, Boundary::Wrap, 1),
-                    Direction::Left => vi_point.sub_absolute(terminal, Boundary::Wrap, 1),
+                    Direction::Right => vi_point.add(terminal, Boundary::None, 1),
+                    Direction::Left => vi_point.sub(terminal, Boundary::None, 1),
                 };
 
                 if let Some(regex_match) = ctx.search_next(origin, direction, Side::Left) {
@@ -201,10 +187,10 @@ impl<T: EventListener> Execute<T> for Action {
             Action::ViAction(ViAction::SearchPrevious) => {
                 let terminal = ctx.terminal();
                 let direction = ctx.search_direction().opposite();
-                let vi_point = terminal.visible_to_buffer(terminal.vi_mode_cursor.point);
+                let vi_point = terminal.vi_mode_cursor.point;
                 let origin = match direction {
-                    Direction::Right => vi_point.add_absolute(terminal, Boundary::Wrap, 1),
-                    Direction::Left => vi_point.sub_absolute(terminal, Boundary::Wrap, 1),
+                    Direction::Right => vi_point.add(terminal, Boundary::None, 1),
+                    Direction::Left => vi_point.sub(terminal, Boundary::None, 1),
                 };
 
                 if let Some(regex_match) = ctx.search_next(origin, direction, Side::Left) {
@@ -214,9 +200,7 @@ impl<T: EventListener> Execute<T> for Action {
             },
             Action::ViAction(ViAction::SearchStart) => {
                 let terminal = ctx.terminal();
-                let origin = terminal
-                    .visible_to_buffer(terminal.vi_mode_cursor.point)
-                    .sub_absolute(terminal, Boundary::Wrap, 1);
+                let origin = terminal.vi_mode_cursor.point.sub(terminal, Boundary::None, 1);
 
                 if let Some(regex_match) = ctx.search_next(origin, Direction::Left, Side::Left) {
                     ctx.terminal_mut().vi_goto_point(*regex_match.start());
@@ -225,9 +209,7 @@ impl<T: EventListener> Execute<T> for Action {
             },
             Action::ViAction(ViAction::SearchEnd) => {
                 let terminal = ctx.terminal();
-                let origin = terminal
-                    .visible_to_buffer(terminal.vi_mode_cursor.point)
-                    .add_absolute(terminal, Boundary::Wrap, 1);
+                let origin = terminal.vi_mode_cursor.point.add(terminal, Boundary::None, 1);
 
                 if let Some(regex_match) = ctx.search_next(origin, Direction::Right, Side::Right) {
                     ctx.terminal_mut().vi_goto_point(*regex_match.end());
@@ -282,7 +264,7 @@ impl<T: EventListener> Execute<T> for Action {
             Action::ScrollPageUp => {
                 // Move vi mode cursor.
                 let term = ctx.terminal_mut();
-                let scroll_lines = term.screen_lines().0 as isize;
+                let scroll_lines = term.screen_lines() as i32;
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
 
                 ctx.scroll(Scroll::PageUp);
@@ -290,7 +272,7 @@ impl<T: EventListener> Execute<T> for Action {
             Action::ScrollPageDown => {
                 // Move vi mode cursor.
                 let term = ctx.terminal_mut();
-                let scroll_lines = -(term.screen_lines().0 as isize);
+                let scroll_lines = -(term.screen_lines() as i32);
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
 
                 ctx.scroll(Scroll::PageDown);
@@ -298,7 +280,7 @@ impl<T: EventListener> Execute<T> for Action {
             Action::ScrollHalfPageUp => {
                 // Move vi mode cursor.
                 let term = ctx.terminal_mut();
-                let scroll_lines = term.screen_lines().0 as isize / 2;
+                let scroll_lines = term.screen_lines() as i32 / 2;
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
 
                 ctx.scroll(Scroll::Delta(scroll_lines));
@@ -306,37 +288,19 @@ impl<T: EventListener> Execute<T> for Action {
             Action::ScrollHalfPageDown => {
                 // Move vi mode cursor.
                 let term = ctx.terminal_mut();
-                let scroll_lines = -(term.screen_lines().0 as isize / 2);
+                let scroll_lines = -(term.screen_lines() as i32 / 2);
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
 
                 ctx.scroll(Scroll::Delta(scroll_lines));
             },
-            Action::ScrollLineUp => {
-                // Move vi mode cursor.
-                let term = ctx.terminal();
-                if term.grid().display_offset() != term.history_size()
-                    && term.vi_mode_cursor.point.line + 1 != term.screen_lines()
-                {
-                    ctx.terminal_mut().vi_mode_cursor.point.line += 1;
-                }
-
-                ctx.scroll(Scroll::Delta(1));
-            },
-            Action::ScrollLineDown => {
-                // Move vi mode cursor.
-                if ctx.terminal().grid().display_offset() != 0
-                    && ctx.terminal().vi_mode_cursor.point.line.0 != 0
-                {
-                    ctx.terminal_mut().vi_mode_cursor.point.line -= 1;
-                }
-
-                ctx.scroll(Scroll::Delta(-1));
-            },
+            Action::ScrollLineUp => ctx.scroll(Scroll::Delta(1)),
+            Action::ScrollLineDown => ctx.scroll(Scroll::Delta(-1)),
             Action::ScrollToTop => {
                 ctx.scroll(Scroll::Top);
 
                 // Move vi mode cursor.
-                ctx.terminal_mut().vi_mode_cursor.point.line = Line(0);
+                let topmost_line = ctx.terminal().topmost_line();
+                ctx.terminal_mut().vi_mode_cursor.point.line = topmost_line;
                 ctx.terminal_mut().vi_motion(ViMotion::FirstOccupied);
                 ctx.mark_dirty();
             },
@@ -345,7 +309,7 @@ impl<T: EventListener> Execute<T> for Action {
 
                 // Move vi mode cursor.
                 let term = ctx.terminal_mut();
-                term.vi_mode_cursor.point.line = term.screen_lines() - 1;
+                term.vi_mode_cursor.point.line = term.bottommost_line();
 
                 // Move to beginning twice, to always jump across linewraps.
                 term.vi_motion(ViMotion::FirstOccupied);
@@ -423,11 +387,10 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         self.ctx.mouse_mut().y = y;
 
         let inside_text_area = size_info.contains_point(x, y);
-        let point = size_info.pixels_to_coords(x, y);
-        let cell_side = self.get_mouse_side();
+        let point = self.coords_to_point(x, y);
+        let cell_side = self.cell_side(x);
 
-        let cell_changed =
-            point.line != self.ctx.mouse().line || point.column != self.ctx.mouse().column;
+        let cell_changed = point != self.ctx.mouse().point;
 
         // Update mouse state and check for URL change.
         let mouse_state = self.mouse_state();
@@ -444,14 +407,15 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
         self.ctx.mouse_mut().inside_text_area = inside_text_area;
         self.ctx.mouse_mut().cell_side = cell_side;
-        self.ctx.mouse_mut().line = point.line;
-        self.ctx.mouse_mut().column = point.column;
+        self.ctx.mouse_mut().point = point;
 
         // Don't launch URLs if mouse has moved.
         self.ctx.mouse_mut().block_url_launcher = true;
 
         if (lmb_pressed || rmb_pressed) && (self.ctx.modifiers().shift() || !self.ctx.mouse_mode())
         {
+            let line = Line(point.line as i32) - self.ctx.terminal().grid().display_offset();
+            let point = Point::new(line, point.column);
             self.ctx.update_selection(point, cell_side);
         } else if cell_changed
             && point.line < self.ctx.terminal().screen_lines()
@@ -469,9 +433,26 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         }
     }
 
-    fn get_mouse_side(&self) -> Side {
+    /// Convert window space pixels to terminal grid coordinates.
+    ///
+    /// If the coordinates are outside of the terminal grid, like positions inside the padding, the
+    /// coordinates will be clamped to the closest grid coordinates.
+    #[inline]
+    fn coords_to_point(&self, x: usize, y: usize) -> Point<usize> {
+        let size = self.ctx.size_info();
+
+        let column = x.saturating_sub(size.padding_x() as usize) / (size.cell_width() as usize);
+        let column = min(Column(column), size.last_column());
+
+        let line = y.saturating_sub(size.padding_y() as usize) / (size.cell_height() as usize);
+        let line = min(line, size.bottommost_line().0 as usize);
+
+        Point::new(line, column)
+    }
+
+    /// Check which side of a cell an X coordinate lies on.
+    fn cell_side(&self, x: usize) -> Side {
         let size_info = self.ctx.size_info();
-        let x = self.ctx.mouse().x;
 
         let cell_x =
             x.saturating_sub(size_info.padding_x() as usize) % size_info.cell_width() as usize;
@@ -492,12 +473,12 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     }
 
     fn normal_mouse_report(&mut self, button: u8) {
-        let (line, column) = (self.ctx.mouse().line, self.ctx.mouse().column);
+        let Point { line, column } = self.ctx.mouse().point;
         let utf8 = self.ctx.terminal().mode().contains(TermMode::UTF8_MOUSE);
 
         let max_point = if utf8 { 2015 } else { 223 };
 
-        if line >= Line(max_point) || column >= Column(max_point) {
+        if line >= max_point || column >= Column(max_point) {
             return;
         }
 
@@ -516,17 +497,17 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             msg.push(32 + 1 + column.0 as u8);
         }
 
-        if utf8 && line >= Line(95) {
-            msg.append(&mut mouse_pos_encode(line.0));
+        if utf8 && line >= 95 {
+            msg.append(&mut mouse_pos_encode(line));
         } else {
-            msg.push(32 + 1 + line.0 as u8);
+            msg.push(32 + 1 + line as u8);
         }
 
         self.ctx.write_to_pty(msg);
     }
 
     fn sgr_mouse_report(&mut self, button: u8, state: ElementState) {
-        let (line, column) = (self.ctx.mouse().line, self.ctx.mouse().column);
+        let Point { line, column } = self.ctx.mouse().point;
         let c = match state {
             ElementState::Pressed => 'M',
             ElementState::Released => 'm',
@@ -598,9 +579,10 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             };
 
             // Load mouse point, treating message bar and padding as the closest cell.
-            let mouse = self.ctx.mouse();
-            let mut point = self.ctx.size_info().pixels_to_coords(mouse.x, mouse.y);
-            point.line = min(point.line, self.ctx.terminal().screen_lines() - 1);
+            let point = self.ctx.mouse().point;
+            let display_offset = self.ctx.terminal().grid().display_offset();
+            let absolute_line = Line(point.line as i32) - display_offset;
+            let point = Point::new(absolute_line, point.column);
 
             match button {
                 MouseButton::Left => self.on_left_click(point),
@@ -760,24 +742,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
             let lines = self.ctx.mouse().scroll_px / height;
 
-            // Store absolute position of vi mode cursor.
-            let term = self.ctx.terminal();
-            let absolute = term.visible_to_buffer(term.vi_mode_cursor.point);
-
-            self.ctx.scroll(Scroll::Delta(lines as isize));
-
-            // Try to restore vi mode cursor position, to keep it above its previous content.
-            let term = self.ctx.terminal_mut();
-            term.vi_mode_cursor.point = term.grid().clamp_buffer_to_visible(absolute);
-            term.vi_mode_cursor.point.column = absolute.column;
-
-            // Update selection.
-            if term.mode().contains(TermMode::VI) {
-                let point = term.vi_mode_cursor.point;
-                if !self.ctx.selection_is_empty() {
-                    self.ctx.update_selection(point, Side::Right);
-                }
-            }
+            self.ctx.scroll(Scroll::Delta(lines as i32));
         }
 
         self.ctx.mouse_mut().scroll_px %= height;
@@ -840,6 +805,12 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
     /// Process key input.
     pub fn key_input(&mut self, input: KeyboardInput) {
+        // All key bindings are disabled while a hint is being selected.
+        if self.ctx.hint_state().active() {
+            *self.ctx.suppress_chars() = false;
+            return;
+        }
+
         // Reset search delay when the user is still typing.
         if self.ctx.search_active() {
             if let Some(timer) = self.ctx.scheduler_mut().get_mut(TimerId::DelayedSearch) {
@@ -876,8 +847,16 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     /// Process a received character.
     pub fn received_char(&mut self, c: char) {
         let suppress_chars = *self.ctx.suppress_chars();
+
+        // Handle hint selection over anything else.
+        if self.ctx.hint_state().active() && !suppress_chars {
+            self.ctx.hint_input(c);
+            return;
+        }
+
+        // Pass keys to search and ignore them during `suppress_chars`.
         let search_active = self.ctx.search_active();
-        if suppress_chars || self.ctx.terminal().mode().contains(TermMode::VI) || search_active {
+        if suppress_chars || search_active || self.ctx.terminal().mode().contains(TermMode::VI) {
             if search_active && !suppress_chars {
                 self.ctx.search_input(c);
             }
@@ -929,12 +908,11 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             };
 
             if binding.is_triggered_by(mode, mods, &key) {
-                // Binding was triggered; run the action.
-                let binding = binding.clone();
-                binding.execute(&mut self.ctx);
-
                 // Pass through the key if any of the bindings has the `ReceiveChar` action.
                 *suppress_chars.get_or_insert(true) &= binding.action != Action::ReceiveChar;
+
+                // Binding was triggered; run the action.
+                binding.action.clone().execute(&mut self.ctx);
             }
         }
 
@@ -960,7 +938,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             }
 
             if binding.is_triggered_by(mode, mods, &button) {
-                binding.execute(&mut self.ctx);
+                binding.action.execute(&mut self.ctx);
             }
         }
     }
@@ -973,13 +951,13 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         // Calculate Y position of the end of the last terminal line.
         let size = self.ctx.size_info();
         let terminal_end = size.padding_y() as usize
-            + size.cell_height() as usize * (size.screen_lines().0 + search_height);
+            + size.cell_height() as usize * (size.screen_lines() + search_height);
 
         let mouse = self.ctx.mouse();
         if self.ctx.message().is_none() || (mouse.y <= terminal_end) {
             None
         } else if mouse.y <= terminal_end + size.cell_height() as usize
-            && mouse.column + message_bar::CLOSE_BUTTON_TEXT.len() >= size.cols()
+            && mouse.point.column + message_bar::CLOSE_BUTTON_TEXT.len() >= size.columns()
         {
             Some(MouseState::MessageBarButton)
         } else {
@@ -1051,7 +1029,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
         // Compute the height of the scrolling areas.
         let end_top = max(min_height, size.padding_y() as i32);
-        let text_area_bottom = size.padding_y() + size.screen_lines().0 as f32 * size.cell_height();
+        let text_area_bottom = size.padding_y() + size.screen_lines() as f32 * size.cell_height();
         let start_bottom = min(size.height() as i32 - min_height, text_area_bottom as i32);
 
         // Get distance from closest window boundary.
@@ -1065,7 +1043,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         };
 
         // Scale number of lines scrolled based on distance to boundary.
-        let delta = delta as isize / step as isize;
+        let delta = delta as i32 / step as i32;
         let event = Event::Scroll(Scroll::Delta(delta));
 
         // Schedule event.
@@ -1092,6 +1070,7 @@ mod tests {
     use alacritty_terminal::event::Event as TerminalEvent;
     use alacritty_terminal::selection::Selection;
 
+    use crate::config::Binding;
     use crate::message_bar::MessageBuffer;
 
     const KEY: VirtualKeyCode = VirtualKeyCode::Key0;
@@ -1115,7 +1094,7 @@ mod tests {
     impl<'a, T: EventListener> super::ActionContext<T> for ActionContext<'a, T> {
         fn search_next(
             &mut self,
-            _origin: Point<usize>,
+            _origin: Point,
             _direction: Direction,
             _side: Side,
         ) -> Option<Match> {
@@ -1148,17 +1127,6 @@ mod tests {
 
         fn scroll(&mut self, scroll: Scroll) {
             self.terminal.scroll_display(scroll);
-        }
-
-        fn mouse_coords(&self) -> Option<Point> {
-            let x = self.mouse.x as usize;
-            let y = self.mouse.y as usize;
-
-            if self.size_info.contains_point(x, y) {
-                Some(self.size_info.pixels_to_coords(x, y))
-            } else {
-                None
-            }
         }
 
         fn mouse_mode(&self) -> bool {
@@ -1224,6 +1192,10 @@ mod tests {
         }
 
         fn scheduler_mut(&mut self) -> &mut Scheduler {
+            unimplemented!();
+        }
+
+        fn hint_state(&mut self) -> &mut HintState {
             unimplemented!();
         }
     }

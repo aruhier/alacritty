@@ -15,12 +15,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - IME composition preview not appearing on Windows
 - Synchronized terminal updates using `DCS = 1 s ST`/`DCS = 2 s ST`
+- Regex terminal hints ([see features.md](./docs/features.md#hints))
 
 ### Fixed
 
 - Alacritty failing to start on X11 with invalid DPI reported by XRandr
 - Text selected after search without any match
 - Incorrect vi cursor position after leaving search
+- Clicking on URLs on Windows incorrectly opens File Explorer
+- Incorrect underline cursor thickness on wide cell
 
 ### Removed
 
