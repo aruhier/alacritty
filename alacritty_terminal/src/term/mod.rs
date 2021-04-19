@@ -3,7 +3,7 @@
 use std::cmp::{max, min};
 use std::ops::{Index, IndexMut, Range};
 use std::sync::Arc;
-use std::{io, mem, ptr, str};
+use std::{mem, ptr, str};
 
 use bitflags::bitflags;
 use log::{debug, trace};
@@ -612,8 +612,15 @@ impl<T> Term<T> {
         self.mode ^= TermMode::VI;
 
         if self.mode.contains(TermMode::VI) {
-            // Reset vi mode cursor position to match primary cursor.
-            self.vi_mode_cursor = ViModeCursor::new(self.grid.cursor.point);
+            let display_offset = self.grid.display_offset() as i32;
+            if self.grid.cursor.point.line > self.bottommost_line() - display_offset {
+                // Move cursor to top-left if terminal cursor is not visible.
+                let point = Point::new(Line(-display_offset), Column(0));
+                self.vi_mode_cursor = ViModeCursor::new(point);
+            } else {
+                // Reset vi mode cursor position to match primary cursor.
+                self.vi_mode_cursor = ViModeCursor::new(self.grid.cursor.point);
+            }
         }
 
         // Update UI about cursor blinking state changes.
@@ -961,32 +968,35 @@ impl<T: EventListener> Handler for Term<T> {
     }
 
     #[inline]
-    fn identify_terminal<W: io::Write>(&mut self, writer: &mut W, intermediate: Option<char>) {
+    fn identify_terminal(&mut self, intermediate: Option<char>) {
         match intermediate {
             None => {
                 trace!("Reporting primary device attributes");
-                let _ = writer.write_all(b"\x1b[?6c");
+                let text = String::from("\x1b[?6c");
+                self.event_proxy.send_event(Event::PtyWrite(text));
             },
             Some('>') => {
                 trace!("Reporting secondary device attributes");
                 let version = version_number(env!("CARGO_PKG_VERSION"));
-                let _ = writer.write_all(format!("\x1b[>0;{};1c", version).as_bytes());
+                let text = format!("\x1b[>0;{};1c", version);
+                self.event_proxy.send_event(Event::PtyWrite(text));
             },
             _ => debug!("Unsupported device attributes intermediate"),
         }
     }
 
     #[inline]
-    fn device_status<W: io::Write>(&mut self, writer: &mut W, arg: usize) {
+    fn device_status(&mut self, arg: usize) {
         trace!("Reporting device status: {}", arg);
         match arg {
             5 => {
-                let _ = writer.write_all(b"\x1b[0n");
+                let text = String::from("\x1b[0n");
+                self.event_proxy.send_event(Event::PtyWrite(text));
             },
             6 => {
                 let pos = self.grid.cursor.point;
-                let response = format!("\x1b[{};{}R", pos.line + 1, pos.column + 1);
-                let _ = writer.write_all(response.as_bytes());
+                let text = format!("\x1b[{};{}R", pos.line + 1, pos.column + 1);
+                self.event_proxy.send_event(Event::PtyWrite(text));
             },
             _ => debug!("unknown device status query: {}", arg),
         };
@@ -1680,15 +1690,17 @@ impl<T: EventListener> Handler for Term<T> {
     }
 
     #[inline]
-    fn text_area_size_pixels<W: io::Write>(&mut self, writer: &mut W) {
+    fn text_area_size_pixels(&mut self) {
         let width = self.cell_width * self.columns();
         let height = self.cell_height * self.screen_lines();
-        let _ = write!(writer, "\x1b[4;{};{}t", height, width);
+        let text = format!("\x1b[4;{};{}t", height, width);
+        self.event_proxy.send_event(Event::PtyWrite(text));
     }
 
     #[inline]
-    fn text_area_size_chars<W: io::Write>(&mut self, writer: &mut W) {
-        let _ = write!(writer, "\x1b[8;{};{}t", self.screen_lines(), self.columns());
+    fn text_area_size_chars(&mut self) {
+        let text = format!("\x1b[8;{};{}t", self.screen_lines(), self.columns());
+        self.event_proxy.send_event(Event::PtyWrite(text));
     }
 }
 
