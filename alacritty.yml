@@ -237,7 +237,7 @@
 
   # Keyboard regex hints
   #hints:
-    # Fist character in the hint label
+    # First character in the hint label
     #
     # Allowed values are CellForeground/CellBackground, which reference the
     # affected cell, or hexadecimal colors like #ff00ff.
@@ -485,7 +485,7 @@
   #   - MoveViModeCursor
   #       Move the vi mode cursor to the beginning of the hint.
   #enabled:
-  # - regex: "(mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)\
+  # - regex: "(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)\
   #           [^\u0000-\u001F\u007F-\u009F<>\"\\s{-}\\^⟨⟩`]+"
   #   command: xdg-open
   #   post_processing: true
